@@ -1,13 +1,13 @@
 use pallas::{
-    applying::utils::{
-        AlonzoProtParams, BabbageProtParams, ByronProtParams, ConwayProtParams,
-        MultiEraProtocolParameters, ShelleyProtParams,
-    },
     codec::utils::KeyValuePairs,
     ledger::{
         configs::{alonzo, byron, conway, shelley},
         primitives::alonzo::Language as AlonzoLanguage,
         traverse::MultiEraUpdate,
+        validate::utils::{
+            AlonzoProtParams, BabbageProtParams, ByronProtParams, ConwayProtParams,
+            MultiEraProtocolParameters, ShelleyProtParams,
+        },
     },
 };
 use tracing::debug;

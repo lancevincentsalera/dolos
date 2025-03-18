@@ -1,15 +1,15 @@
 use crate::{
-    ledger::{
-        pparams::{self, Genesis},
-        EraCbor, TxoRef,
-    },
+    ledger::pparams::{self, Genesis},
     serve::utils::apply_mask,
     state::{LedgerError, LedgerStore},
 };
 use itertools::Itertools as _;
-use pallas::interop::utxorpc::spec as u5c;
 use pallas::interop::utxorpc::{self as interop, spec::query::any_utxo_pattern::UtxoPattern};
 use pallas::ledger::traverse::MultiEraOutput;
+use pallas::{
+    interop::utxorpc::spec as u5c,
+    ledger::validate::utils::{EraCbor, TxoRef},
+};
 use std::{collections::HashSet, sync::Arc};
 use tonic::{Request, Response, Status};
 use tracing::info;

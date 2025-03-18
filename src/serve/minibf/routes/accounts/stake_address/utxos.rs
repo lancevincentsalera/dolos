@@ -1,11 +1,13 @@
-use pallas::ledger::{addresses::Address, primitives::conway, traverse::MultiEraAsset};
+use pallas::ledger::{
+    addresses::Address,
+    primitives::conway,
+    traverse::MultiEraAsset,
+    validate::utils::{EraCbor, TxoRef},
+};
 use rocket::{get, http::Status, State};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ledger::{EraCbor, TxoRef},
-    state::LedgerStore,
-};
+use crate::state::LedgerStore;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Amount {

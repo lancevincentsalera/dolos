@@ -1,10 +1,13 @@
 use itertools::Itertools;
 use miette::IntoDiagnostic;
-use pallas::ledger::traverse::{MultiEraBlock, MultiEraUpdate};
+use pallas::ledger::{
+    traverse::{MultiEraBlock, MultiEraUpdate},
+    validate::utils::EraCbor,
+};
 use std::path::Path;
 
 use dolos::{
-    ledger::{ChainPoint, EraCbor},
+    ledger::ChainPoint,
     wal::{redb::WalStore, RawBlock, ReadUtils, WalReader as _},
 };
 

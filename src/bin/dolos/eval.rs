@@ -1,9 +1,11 @@
-use dolos::ledger::{EraCbor, TxoRef};
 use itertools::*;
 use miette::{Context, IntoDiagnostic};
-use pallas::{
-    applying::{validate_tx, CertState, Environment as ValidationContext, UTxOs},
-    ledger::traverse::{Era, MultiEraInput, MultiEraOutput, MultiEraUpdate},
+use pallas::ledger::{
+    traverse::{Era, MultiEraInput, MultiEraOutput, MultiEraUpdate},
+    validate::{
+        phase_one::validate_tx,
+        utils::{CertState, Environment as ValidationContext, EraCbor, TxoRef, UTxOs},
+    },
 };
 use std::{borrow::Cow, path::PathBuf};
 

@@ -1,16 +1,17 @@
-use crate::{
-    ledger::pparams::Genesis,
-    state::LedgerStore,
-    uplc::{script_context::SlotConfig, tx, EvalReport},
-};
+use crate::{ledger::pparams::Genesis, state::LedgerStore};
 use futures_util::StreamExt;
 use itertools::Itertools;
 use pallas::{
-    applying::{utils::AccountState, validate_tx, CertState, Environment, UTxOs},
     crypto::hash::Hash,
     ledger::{
         primitives::{NetworkId, TransactionInput},
         traverse::{MultiEraBlock, MultiEraInput, MultiEraOutput, MultiEraTx},
+        validate::{
+            phase_one::validate_tx,
+            phase_two::evaluate_tx,
+            uplc::{script_context::SlotConfig, EvalReport},
+            utils::{AccountState, CertState, Environment, UTxOs},
+        },
     },
 };
 use std::{
@@ -34,11 +35,11 @@ pub enum MempoolError {
     DecodeError(#[from] pallas::codec::minicbor::decode::Error),
 
     #[error("tx validation failed: {0}")]
-    ValidationError(#[from] pallas::applying::utils::ValidationError),
+    ValidationError(#[from] pallas::ledger::validate::utils::ValidationError),
 
     #[cfg(feature = "phase2")]
     #[error("tx evaluation failed")]
-    EvaluationError(#[from] crate::uplc::error::Error),
+    EvaluationError(#[from] pallas::ledger::validate::uplc::error::Error),
 
     #[error("state error: {0}")]
     StateError(#[from] crate::state::LedgerError),
@@ -185,7 +186,7 @@ impl Mempool {
         Ok(())
     }
 
-    #[cfg(feature = "phase2")]
+    // #[cfg(feature = "phase2")]
     pub fn evaluate(&self, tx: &MultiEraTx) -> Result<EvalReport, MempoolError> {
         let tip = self.ledger.cursor()?;
 
@@ -211,7 +212,7 @@ impl Mempool {
 
         let utxos = self.ledger.get_utxos(input_refs)?;
 
-        let report = tx::eval_tx(tx, &eras.edge().pparams, &utxos, &slot_config)?;
+        let report = evaluate_tx(tx, &eras.edge().pparams, &utxos, &slot_config)?;
 
         Ok(report)
     }

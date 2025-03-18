@@ -1,11 +1,12 @@
-use pallas::ledger::{primitives::conway, traverse::MultiEraAsset};
+use pallas::ledger::{
+    primitives::conway,
+    traverse::MultiEraAsset,
+    validate::utils::{EraCbor, TxoRef},
+};
 use rocket::{get, http::Status, State};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ledger::{EraCbor, TxoRef},
-    state::LedgerStore,
-};
+use crate::state::LedgerStore;
 
 pub mod asset;
 

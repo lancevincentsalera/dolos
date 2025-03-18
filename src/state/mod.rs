@@ -1,7 +1,10 @@
 use itertools::Itertools as _;
 use pallas::{
     interop::utxorpc as interop,
-    ledger::traverse::{MultiEraBlock, MultiEraTx},
+    ledger::{
+        traverse::{MultiEraBlock, MultiEraTx},
+        validate::utils::{EraCbor, TxoRef, UtxoMap, UtxoSet},
+    },
 };
 use pparams::Genesis;
 use std::collections::{HashMap, HashSet};

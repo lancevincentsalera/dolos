@@ -6,6 +6,7 @@ use pallas::interop::utxorpc as interop;
 use pallas::interop::utxorpc as u5c;
 use pallas::interop::utxorpc::spec::cardano::ExUnits;
 use pallas::interop::utxorpc::spec::submit::{WaitForTxResponse, *};
+use pallas::ledger::validate::{self};
 use std::collections::HashSet;
 use std::pin::Pin;
 use tokio_stream::wrappers::BroadcastStream;
@@ -59,7 +60,7 @@ fn event_to_wait_for_tx_response(event: Event) -> WaitForTxResponse {
 }
 
 fn tx_eval_to_u5c(
-    eval: Result<crate::uplc::EvalReport, MempoolError>,
+    eval: Result<validate::uplc::EvalReport, MempoolError>,
 ) -> u5c::spec::cardano::TxEval {
     match eval {
         Ok(eval) => u5c::spec::cardano::TxEval {

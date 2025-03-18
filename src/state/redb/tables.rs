@@ -1,6 +1,7 @@
 use ::redb::{MultimapTableDefinition, TableDefinition, WriteTransaction};
 use ::redb::{Range, ReadTransaction, ReadableTable as _, TableError};
 use itertools::Itertools as _;
+use pallas::ledger::validate::utils::TxoIdx;
 use pallas::{crypto::hash::Hash, ledger::traverse::MultiEraOutput};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
