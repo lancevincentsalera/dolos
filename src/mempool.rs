@@ -186,7 +186,7 @@ impl Mempool {
         Ok(())
     }
 
-    // #[cfg(feature = "phase2")]
+    #[cfg(feature = "phase2")]
     pub fn evaluate(&self, tx: &MultiEraTx) -> Result<EvalReport, MempoolError> {
         let tip = self.ledger.cursor()?;
 
