@@ -1,15 +1,22 @@
 use crate::{
+    chain::ChainStore,
     ledger::{
-        pparams::{self, Genesis},
+        pparams::{self, EraSummary, Genesis},
         EraCbor, TxoRef,
     },
     serve::utils::apply_mask,
     state::{LedgerError, LedgerStore},
 };
 use itertools::Itertools as _;
-use pallas::interop::utxorpc::spec as u5c;
 use pallas::interop::utxorpc::{self as interop, spec::query::any_utxo_pattern::UtxoPattern};
 use pallas::ledger::traverse::MultiEraOutput;
+use pallas::{
+    interop::utxorpc::spec as u5c,
+    ledger::{
+        traverse::{MultiEraBlock, MultiEraTx},
+        validate::utils::MultiEraProtocolParameters,
+    },
+};
 use std::{collections::HashSet, sync::Arc};
 use tonic::{Request, Response, Status};
 use tracing::info;
@@ -18,14 +25,16 @@ pub struct QueryServiceImpl {
     ledger: LedgerStore,
     mapper: interop::Mapper<LedgerStore>,
     genesis: Arc<Genesis>,
+    chain: ChainStore,
 }
 
 impl QueryServiceImpl {
-    pub fn new(ledger: LedgerStore, genesis: Arc<Genesis>) -> Self {
+    pub fn new(ledger: LedgerStore, genesis: Arc<Genesis>, chain: ChainStore) -> Self {
         Self {
             ledger: ledger.clone(),
             genesis,
             mapper: interop::Mapper::new(ledger),
+            chain,
         }
     }
 }
@@ -215,6 +224,38 @@ fn into_u5c_utxo(
     })
 }
 
+fn into_u5c_era_summary(summary: EraSummary) -> u5c::cardano::EraSummary {
+    let start = summary.start;
+    let end = summary.end.unwrap();
+    let pparams = summary.pparams;
+
+    u5c::cardano::EraSummary {
+        name: match_pparams_to_era_name(pparams),
+        start: Some(u5c::cardano::EraBoundary {
+            time: start.timestamp.timestamp() as u64,
+            slot: start.slot,
+            epoch: start.epoch,
+        }),
+        end: Some(u5c::cardano::EraBoundary {
+            time: end.timestamp.timestamp() as u64,
+            slot: end.slot,
+            epoch: end.epoch,
+        }),
+        config: "".to_string(),
+    }
+}
+
+fn match_pparams_to_era_name(pparams: MultiEraProtocolParameters) -> String {
+    match pparams {
+        MultiEraProtocolParameters::Alonzo(_) => "alonzo".to_string(),
+        MultiEraProtocolParameters::Babbage(_) => "babbage".to_string(),
+        MultiEraProtocolParameters::Byron(_) => "byron".to_string(),
+        MultiEraProtocolParameters::Shelley(_) => "shelley".to_string(),
+        MultiEraProtocolParameters::Conway(_) => "conway".to_string(),
+        _ => "Unknown".to_string(),
+    }
+}
+
 #[async_trait::async_trait]
 impl u5c::query::query_service_server::QueryService for QueryServiceImpl {
     async fn read_params(
@@ -362,5 +403,111 @@ impl u5c::query::query_service_server::QueryService for QueryServiceImpl {
             ledger_tip: cursor,
             next_token: String::default(),
         }))
+    }
+
+    async fn read_tx(
+        &self,
+        request: Request<u5c::query::ReadTxRequest>,
+    ) -> Result<Response<u5c::query::ReadTxResponse>, Status> {
+        let message = request.into_inner();
+
+        info!("received new grpc query");
+
+        let tx_hash = message.hash;
+
+        let (block_body, tx) = self
+            .chain
+            .get_tx_with_block_data(&tx_hash)
+            .map_err(|e| Status::internal(format!("failed to query chain for tx: {e}")))?
+            .ok_or_else(|| Status::not_found("transaction not found"))?;
+
+        let mtx = MultiEraTx::decode(&tx)
+            .map_err(|e| Status::internal(format!("failed to decode transaction: {e}")))?;
+
+        let mblock = MultiEraBlock::decode(&block_body)
+            .map_err(|e| Status::internal(format!("failed to decode block: {e}")))?;
+        let block_slot = mblock.slot();
+        let block_hash = mblock.hash();
+
+        let block = self.mapper.map_block_cbor(&block_body);
+
+        let mut response = u5c::query::ReadTxResponse {
+            tx: Some(u5c::query::AnyChainTx {
+                native_bytes: mtx.encode().into(),
+                chain: Some(u5c::query::any_chain_tx::Chain::Cardano(
+                    self.mapper.map_tx(&mtx),
+                )),
+                block: Some(u5c::query::AnyChainBlock {
+                    native_bytes: block_body.to_vec().into(),
+                    chain: Some(u5c::query::any_chain_block::Chain::Cardano(block)),
+                }),
+            }),
+            ledger_tip: Some(u5c::query::ChainPoint {
+                slot: block_slot,
+                hash: block_hash.to_vec().into(),
+            }),
+        };
+
+        if let Some(mask) = message.field_mask {
+            response = apply_mask(response, mask.paths)
+                .map_err(|_| Status::internal("Failed to apply field mask"))?
+        }
+
+        Ok(Response::new(response))
+    }
+
+    async fn read_chain_config(
+        &self,
+        request: Request<u5c::query::ReadChainConfigRequest>,
+    ) -> Result<Response<u5c::query::ReadChainConfigResponse>, Status> {
+        let message = request.into_inner();
+
+        info!("received new grpc query");
+
+        let tip = self.ledger.cursor()?;
+
+        let updates = self
+            .ledger
+            .get_pparams(tip.as_ref().map(|p| p.0).unwrap_or_default())?;
+
+        let updates: Vec<_> = updates
+            .into_iter()
+            .map(TryInto::try_into)
+            .try_collect::<_, _, pallas::codec::minicbor::decode::Error>()
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let summary = pparams::fold_with_hacks(&self.genesis, &updates, tip.as_ref().unwrap().0);
+
+        let era_summaries = summary.past;
+        let era_summaries: Vec<_> = era_summaries
+            .into_iter()
+            .map(into_u5c_era_summary)
+            .collect();
+
+        let network_id = match self.genesis.shelley.network_id.as_ref() {
+            Some(network) => network.clone(),
+            None => "".to_string(),
+        };
+        let network_magic = self.genesis.shelley.network_magic.unwrap();
+        let caip2 = format!("cip34:{}-{}", network_id, network_magic);
+
+        let genesis = "".to_string();
+
+        let mut response = u5c::query::ReadChainConfigResponse {
+            genesis: genesis.as_bytes().to_vec().into(),
+            caip2,
+            summary: Some(u5c::query::read_chain_config_response::Summary::Cardano(
+                u5c::cardano::EraSummaries {
+                    summaries: era_summaries,
+                },
+            )),
+        };
+
+        if let Some(mask) = message.field_mask {
+            response = apply_mask(response, mask.paths)
+                .map_err(|_| Status::internal("Failed to apply field mask"))?
+        }
+
+        Ok(Response::new(response))
     }
 }

@@ -17,7 +17,7 @@ use crate::wal::{self, ChainPoint, RawBlock, WalReader as _};
 
 fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> Result<wal::ChainPoint, Status> {
     Ok(wal::ChainPoint::Specific(
-        block_ref.index,
+        block_ref.slot,
         super::convert::bytes_to_hash32(&block_ref.hash)?,
     ))
 }
@@ -26,6 +26,19 @@ fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> Result<wal::ChainPoint,
 //     let block = any_chain_block::Chain::Raw(Bytes::copy_from_slice(raw));
 //     AnyChainBlock { chain: Some(block) }
 // }
+
+fn get_block_height(chain: &ChainStore, slot: u64) -> Result<u64, Status> {
+    let block_body = chain
+        .get_block_by_slot(&slot)
+        .map_err(|_| Status::internal("Failed to query chain service.".to_string()))?
+        .ok_or(Status::not_found("Failed to find block.".to_string()))?;
+
+    let height = MultiEraBlock::decode(&block_body)
+        .map_err(|_| Status::internal("Failed to decode block."))?
+        .number();
+
+    Ok(height)
+}
 
 fn raw_to_anychain(mapper: &Mapper<LedgerStore>, body: &BlockBody) -> u5c::sync::AnyChainBlock {
     let block = mapper.map_block_cbor(body);
@@ -36,12 +49,17 @@ fn raw_to_anychain(mapper: &Mapper<LedgerStore>, body: &BlockBody) -> u5c::sync:
     }
 }
 
-fn raw_to_blockref(raw: &wal::RawBlock) -> u5c::sync::BlockRef {
+fn raw_to_blockref(raw: &wal::RawBlock, chain: &ChainStore) -> u5c::sync::BlockRef {
     let RawBlock { slot, hash, .. } = raw;
 
+    let height = get_block_height(chain, *slot)
+        .map_err(|_| Status::internal("Failed to query chain service.".to_string()))
+        .unwrap_or(0);
+
     u5c::sync::BlockRef {
-        index: *slot,
+        slot: *slot,
         hash: hash.to_vec().into(),
+        height,
     }
 }
 
@@ -65,19 +83,26 @@ fn wal_log_to_tip_response(
     }
 }
 
-fn point_to_reset_tip_response(point: ChainPoint) -> u5c::sync::FollowTipResponse {
+fn point_to_reset_tip_response(
+    point: ChainPoint,
+    chain: ChainStore,
+) -> u5c::sync::FollowTipResponse {
     match point {
         ChainPoint::Origin => u5c::sync::FollowTipResponse {
             action: u5c::sync::follow_tip_response::Action::Reset(BlockRef {
+                slot: 0,
                 hash: vec![].into(),
-                index: 0,
+                height: 0,
             })
             .into(),
         },
         ChainPoint::Specific(slot, hash) => u5c::sync::FollowTipResponse {
             action: u5c::sync::follow_tip_response::Action::Reset(BlockRef {
+                slot,
                 hash: hash.to_vec().into(),
-                index: slot,
+                height: get_block_height(&chain, slot)
+                    .map_err(|_| Status::internal("Failed to query chain service.".to_string()))
+                    .unwrap_or(0),
             })
             .into(),
         },
@@ -123,7 +148,7 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
             .iter()
             .map(|br| {
                 self.chain
-                    .get_block_by_slot(&br.index)
+                    .get_block_by_slot(&br.slot)
                     .map_err(|_| Status::internal("Failed to query chain service."))?
                     .map(|body| raw_to_anychain(&self.mapper, &body))
                     .ok_or(Status::not_found(format!("Failed to find block: {:?}", br)))
@@ -155,7 +180,7 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
                 if idx < len - 1 {
                     Either::Left(raw_to_anychain(&self.mapper, &x.body))
                 } else {
-                    Either::Right(raw_to_blockref(&x))
+                    Either::Right(raw_to_blockref(&x, &self.chain))
                 }
             });
 
@@ -200,7 +225,8 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
         // the consumer knows what intersection was found and can reset their state
         // This would also mimic ouroboros giving a `Rollback` as the first message.
 
-        let reset = once(async { Ok(point_to_reset_tip_response(point)) });
+        let chain = self.chain.clone();
+        let reset = once(async { Ok(point_to_reset_tip_response(point, chain)) });
 
         let forward =
             wal::WalStream::start(self.wal.clone(), from_seq, self.cancellation_token.clone())
@@ -226,10 +252,13 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
             .map_err(|_| Status::internal("Failed to decode tip block."))?
             .hash();
 
+        let height = get_block_height(&self.chain, slot)?;
+
         let response = u5c::sync::ReadTipResponse {
             tip: Some(BlockRef {
-                index: slot,
+                slot,
                 hash: hash.to_vec().into(),
+                height,
             }),
         };
 
